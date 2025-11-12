@@ -1,0 +1,23 @@
+{
+  "name": "dreamer-bot-ultra",
+  "version": "2.0.0",
+  "description": "Express + TelegramBot + Firebase Admin server for Dreamer Android client",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "node-telegram-bot-api": "^0.63.0",
+    "firebase-admin": "^12.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
