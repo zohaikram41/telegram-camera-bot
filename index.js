@@ -1962,7 +1962,7 @@ async function sendOrEdit(chat_id, msg_id, text, options, key) {
     } catch (e) {
       const desc = e && (e.description || e.message || "");
       if (typeof desc === 'string' && desc.includes('message is not modified')) {
-        return; // harmless, nothing to update
+        return; // harmless
       }
       // otherwise fall through to send
     }
@@ -1975,7 +1975,7 @@ async function sendOrEdit(chat_id, msg_id, text, options, key) {
       await bot.sendMessage(cid, text, options || {});
     }
   } catch (_) {
-    // suppress send errors to avoid cascading failures
+    // suppress
   }
 }
 
